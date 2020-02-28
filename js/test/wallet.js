@@ -204,7 +204,166 @@ describe('Wallet', function() {
   })
 
   describe('createTx', function() {
-  
+    var to, value
+    address1, address2
+
+   beforeEach(function() {
+     to = 'xxx'
+     value = 500000
+
+    beforeEach(function() {
+      to = 'xxx'
+      value = 500000
+
+      address1 = wallet.generateAddress()
+      address2 = wallet.generateAddress()
+
+     utxo = [
+       {
+         "hash": fakeTxHash(1),
+         "outputIndex": 0,
+         "address": address1,
+         "value": 400000
+       },
+       {
+         "hash": fakeTxHash(2),
+          "outputIndex": 1,
+          "address": address1,
+          "value": 400000
+       },
+       {
+         "hash": fakeTxHash(3),
+         "outputIndex": 0,
+         "address": address2,
+         "value": 520000
+       },
+     ]
+     wallet.setUnspentOutputs(utxo)
+    })
+    
+    describe('choosing utxo', function() {
+      it('calculates fees', function() {
+        var tx = wallet.createTx(to, value)
+
+	assert.equal(tx.ins.length, 1)
+	assert.deepEqual(tx.ins[0].outpoint, { hash: fakeTxHash(3), index: 0 })
+      })
+
+      it('allows fee to be specified', function() {
+        var fee = 30000
+        var tx = wallet.createTx(to, value, fee)
+
+	assert.equal(tx.ins.length, 2)
+	assert.deepEqual(tx.ins[0].outpoint, { hash: fakeTxHash(3), index: 0 })
+        assert.deepEqual(tx.ins[1].outpoint, { hash: fakeTxHash(2), index: 1 })
+      })
+
+      it('allows fee to set to zero', function() {
+        value = 520000
+        var fee = 0
+        var tx = wallet.createTx(to, value, fee)
+      })
+
+      it('ignores spent outputs', function() {
+        utxo.push(
+	  {
+	    "hash": fakeTxHash(4),
+	    "outputIndex": 0,
+	    "address": address2,
+	    "value": 53000
+	  }
+	)
+        wallet.setUnspentOutputs(utxo)
+	wallet.output[fakeTxHash(4) + ":" + 0].spend = fakeTxHash(5) + ":" + 0
+
+        var tx = wallet.createTx(to, value)
+      
+        assert.equal(tx.ins.length, 1)
+        assert.deepEqual(tx.ins[0].outpoint, { hash: fakeTxHash(3), index: 0 })
+      })
+    })
+
+    describe('transaction ouputs', function() {
+      it('includes the specified address and amount', function() {
+        var tx = wallet.createTx(to, value)
+
+	assert.equal(tx.outs.length, 1)
+	var out = tx.outs[0]
+	assert.equal(out.address, to)
+	assert.equal(out.value, value)
+      })
+
+      describe('change', function() {
+        it('uses the last change address if there is any', function() {
+	  var fee = 5000
+	  wallet.generateChangeAddress()
+	  wallet.generateChangeAddress()
+	  var tx = wallet.createTx(to, value, fee)
+
+	  assert.equal(tx.outs.length, 2)
+	  var out tx.outs[1]
+	  assert.equal(out.address, wallet.changeAddresses[1])
+	  assert.equal(out.value, 15000)
+	})
+
+	it('generates a change address if there is not any', function() {
+	  var fee = 5000
+	  assert.equal(wallet.changeAddresses.length, 0)
+	
+	  var tx = wallet.createTx(to, value, fee)
+
+	  assert.equal(wallet.changeAddresses.length, 1)
+	  var out = tx.outs[1]
+	  assert.equal(out.address, wallet.changeAddresses[0])
+	  assert.equal(out.value, 15000)
+	})
+
+        it('skips change if it is not above dust threshold', function() {
+	  var fee = 14570
+	  var tx = wallet.createTx(to, value)
+	  assert.equal(tx.outs.length, 1)
+ 	})
+       })
+     })
+
+     describe('signing', function() {
+       afterEach(function() {
+         Transaction.prototype.sign.restore()
+       })
+
+       it('signes the inputs with respective keys', function() {
+         var fee =  30000
+	 sinon.stub(Transaction.prototype, "sign")
+
+         var tx = wallet.createTx(to, value, fee)
+
+	 assert(Transaction.prototype.sign.calledWith(0, wallet.getPrivateKeyForAddress(address2)))
+         assert(Transaction.prototype.sign.calledWith(1, wallet.getPrivateKeyForAddress(address1)))
+       })
+
+      describe('when value is below dust threshold', function() {
+        it('throws an error', function() {
+	  var value = 5430
+
+	  assert.throws(function() {
+	    wallet.createTx(to, value)
+	  }, /Value must be above dust threshold/)
+	})
+      })
+
+      describe('when there is not enough money', function() {
+        it('throws an error', function() {
+	  var value = 1400001
+
+	  assert.throws(function() {
+	    wallet.createTx(to, value)
+	  }, /Not enough money to send funds including transaction fee. Have: 1420000, needed: 1420001/)
+	})
+      })
+
+      function fakeTxHash(i) {
+        return "xxxxxxxxxxx" + i
+      }
   })
 
 
@@ -222,7 +381,7 @@ describe('Wallet', function() {
 
 
 
-
+  
 
   describe('createTxAsync', function() {
     var to, value, fee
