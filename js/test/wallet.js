@@ -118,15 +118,186 @@ describe('Wallet', function() {
   })
 
   describe('getInternalPrivateKey', function() {
-  
+    it('returns the private key at the given index of internal account', function() {
+      var wallet = new Wallet(seed, {network: 'testnet'})
+
+      assertEqual(wallet.getInternalPrivateKey(0), wallet.getInternalAccount().derive(0).priv)
+      assertEqual(wallet.getInternalPrivateKey(1), wallet.getInternalAccount().derive(1).priv)
+    })
   })
 
   describe('getPrivateKeyForAddress', function() {
-  
+    it('returns the private key for the given address', function() {
+      var wallet = new Wallet(seed, {network: 'testnet'})
+      wallet.generateChangeAddress()
+      wallet.generateAddress()
+      wallet.generateAddress()
+
+      assertEqual(wallet.getPrivateKeyForAddress("xxxx"),
+        wallet.getExternalAccount().derive(1).priv)
+        assertEqual(wallet.getPrivateKeyForAddress("xxx"),
+		wallet.getInternalAccount().derive(0).priv)
+    })
+
+    it('raises an error when address is not found', function() {
+      var wallet = new Wallet(seed, {network: 'testnet'})
+      assert.thorows(function() {
+        wallet.getPrivateKeyForAddress("xxx")
+      }, /**/)
+    })
   })
 
   describe('Unspent Outputs', function() {
+    var expectedUtxo, expectedOutputKey
+    beforeEach(function() {
+      expectedUtxo = {
+        "hash": "xxx",
+        "hashLittleEndian": "xxx",
+	"outputIndex": 0,
+	"address": "xxx",
+	"value": 20000   
+      }
+      expectedOutputKey = expectedUtxo.hash + ":" + expectedUtxo.outputIndex
+    })
+
+    function addUtxoToOutput(utxo) {
+      var key = utxo.hash + ":" + utxo.outputIndex
+      wallet.outputs[key] = {
+        receive: key,
+        address: utxo.address,
+	value: utxo.value
+      }
+    }
   
+    describe('getBalance', function() {
+      var utxo1
+
+      beforeEach(function() {
+        utxo1 = cloneObject(expectedUtxo)
+        utxo.hash = utxo1.hash.replace('7', '1')
+      })
+
+      it('sums over utxo values', function() {
+        addUtxoToOutput(expectedUtxo)
+	addUtxoToOutput(utxo1)
+
+	assert.equal(wallet.getBalance(), 40000)
+      })
+
+      it('excludes spent outputs', function() {
+        addUtxoToOutput()
+        addUtxoToOutput(utxo1)
+	wallet.outputs[utxo1.hash + ':' + utxo1.outputIndex].spend = "sometxn:m"
+
+        assert.equal(wallet.getBalance(), 20000)
+      })
+    })
+
+    describe('getUnspentOutputs', function() {
+      beforeEach(function() {
+        addUtxoToOutput(expectedUtxo)
+      })
+
+      it('parses wallet outputs to the expect format', function() {
+        assert.deepEqual(wallet.getUnspentOutputs(), [expectedUtxo])
+      })
+
+      it('excludes spent outputs', function() {
+        wallet.outputs[expectedOutputKey].spent = "sometxn:m"
+        assert.deepEqual(wallet.getUnspentOutputs(), [])
+      })
+    })
+
+    describe('setUnpentOutputs', function() {
+      var utxo
+      beforeEach(function() {
+        utxo = cloneObject([expectedUtxo])
+      })
+    
+      it('uses hashLittleEndian when hash is present', function() {
+        delete utxo[0]['hash']
+
+        wallet.setUnspentOutputs(utxo)
+        verifyOutputs()
+      })
+
+      it('uses hash when hashLittleEndian is not present', function() {
+        delete utxo[0]['hashLitleEndian']
+
+        wallet.setUnspentOutputs(utxo)
+        verifyOutputs()
+      })
+
+      it('uses hash when both hash and hashLittleEndian are present', function() {
+        wallet.setUnspentOutputs(utxo)
+        verifyOutputs()
+      })
+
+      it('uses hash when both hash and hashLittleEndian are present', function() {
+        wallet.setUnspentOutputs(utxo)
+        verifyOutputs()
+      })
+
+      describe('required fields', function() {
+        it("throws an error when hash and hashLittleEndian are both missing", function(){
+	  delete utxo[0]['hash']
+	  delete utxo[0]['hashLittleEndian']
+
+	  assert.throws(function() {
+	    wallet.setUnspentOutputs(utxo)
+	  }, /**/)
+	});
+
+        ['outputIndex', 'address', 'value'].forEach(function(field) {
+	  it("throws an error when " + field + " is missing", function() {
+	    delete utxo[0][field]
+
+	    assert.throw(function() {
+	      wallet.setUnspentOutputs(utxo)
+	    }, new RegExp('Invalid unspent output: key ' + field + ' is missing'))
+	  })
+	})
+      })
+
+      function verifyOutputs() {
+        var output = wallet.outputs[expectedOutputKey]
+        assert(output)
+        assert.equal(output.value, utxo[0].value)
+        assert.equal(output.address, utxo[0].address)
+      }
+    })
+
+    describe('setUnspentOutputsAsync', function() {
+      var utxo
+      beforeEach(function() {
+        utxo = cloneObject([expectedUtxo])
+      })
+
+      afterEach(function() {
+        wallet.setUnspentOutputs.restore()
+      })
+
+      it('calls setUnspentOutputs', function(done) {
+        sinon.stub(wallet, "setUnspentOutputs")
+
+        var callback = function() {
+	  assert(wallet.setUnspentOutputs.calledWith(utxo))
+	  done()
+	}
+
+        wallet.setUnspentOutputsAsync(utxo, callback)
+      })
+
+      it('when setUnspentOutputs throws an error, it invokes callback with error', function(done) {
+        sinon.stub(wallet, "setUnspentOutputs").throws()
+
+        var callback = function(err) {
+	  assert(err instanceof Error)
+	  done()
+	}
+        wallet.setUnspentOutputsAsync(utxo, callback)
+      })
+    })
   })
 
   describe('processTx', function() {
@@ -367,22 +538,6 @@ describe('Wallet', function() {
   })
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-
   describe('createTxAsync', function() {
     var to, value, fee
 
@@ -446,21 +601,4 @@ describe('Wallet', function() {
     return JSON.parse(JSON.stringify(obj))
   }
 })
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
